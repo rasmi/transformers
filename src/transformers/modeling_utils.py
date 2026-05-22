@@ -129,6 +129,7 @@ from .utils import (
 from .utils.generic import GeneralInterface, is_flash_attention_requested, split_attention_implementation
 from .utils.hub import DownloadKwargs, create_and_tag_model_card, get_checkpoint_shard_files
 from .utils.import_utils import (
+    get_module_source,
     is_flash_attn_greater_or_equal,
     is_huggingface_hub_greater_or_equal,
     is_sagemaker_mp_enabled,
@@ -2080,7 +2081,7 @@ class PreTrainedModel(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToH
     @classmethod
     def _can_set_attn_implementation(cls) -> bool:
         """Detect whether the class supports setting its attention implementation dynamically. It is an ugly check based on
-        opening the file, but avoids maintaining yet another property flag.
+        inspecting the module source, but avoids maintaining yet another property flag.
         """
         # Skip dynamic wrappers like FSDP2's FSDP<ModelName>, whose __module__ is inside torch.*
         cls = next((k for k in cls.__mro__ if not k.__module__.startswith("torch.")), cls)
@@ -2088,9 +2089,10 @@ class PreTrainedModel(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToH
         # Missing module entry (e.g. cleared by a test) or custom model in a jupyter notebook / repl -> do not allow to set it
         if class_module is None or not hasattr(class_module, "__file__"):
             return False
-        class_file = class_module.__file__
-        with open(class_file, "r", encoding="utf-8") as f:
-            code = f.read()
+        try:
+            code = get_module_source(class_module)
+        except (FileNotFoundError, ModuleNotFoundError, ValueError, OSError):
+            return False
         # heuristic -> if we find those patterns, the model uses the correct interface
         if re.search(r"class \w+Attention\(nn.Module\)", code):
             return "eager_attention_forward" in code and "ALL_ATTENTION_FUNCTIONS.get_interface(" in code
@@ -2101,7 +2103,7 @@ class PreTrainedModel(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToH
     @classmethod
     def _can_set_experts_implementation(cls) -> bool:
         """Detect whether the class supports setting its experts implementation dynamically. It is an ugly check based on
-        opening the file, but avoids maintaining yet another property flag.
+        inspecting the module source, but avoids maintaining yet another property flag.
         """
         # Skip dynamic wrappers like FSDP2's FSDP<ModelName>, whose __module__ is inside torch.*
         cls = next((k for k in cls.__mro__ if not k.__module__.startswith("torch.")), cls)
@@ -2109,9 +2111,10 @@ class PreTrainedModel(nn.Module, EmbeddingAccessMixin, ModuleUtilsMixin, PushToH
         # Missing module entry (e.g. cleared by a test) or custom model in a jupyter notebook / repl -> do not allow to set it
         if class_module is None or not hasattr(class_module, "__file__"):
             return False
-        class_file = class_module.__file__
-        with open(class_file, "r", encoding="utf-8") as f:
-            code = f.read()
+        try:
+            code = get_module_source(class_module)
+        except (FileNotFoundError, ModuleNotFoundError, ValueError, OSError):
+            return False
         # heuristic -> if we the use_experts_implementation decorator is used, then we can set it
         return "@use_experts_implementation" in code
 

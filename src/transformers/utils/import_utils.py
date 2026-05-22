@@ -18,10 +18,12 @@ Import utilities: Utilities related to imports and our lazy inits.
 import functools
 import importlib.machinery
 import importlib.metadata
+import importlib.resources
 import importlib.util
 import json
 import operator
 import os
+import pathlib
 import re
 import shutil
 import subprocess
@@ -2671,6 +2673,43 @@ def fetch__all__(file_content) -> list[str]:
         return _all
 
 
+def get_module_source(module: ModuleType | str) -> str:
+    """
+    Read the source of a Python module via importlib.resources. Accepts either a module object or a fully
+    qualified dotted name (e.g. `"transformers.models.bert.modeling_bert"`). Raises `ValueError` if the
+    module is not part of a package (e.g. `__main__` or a top-level script).
+    """
+    if isinstance(module, ModuleType):
+        # Packages have `__path__`; read their `__init__.py` directly.
+        if hasattr(module, "__path__"):
+            return importlib.resources.files(module.__name__).joinpath("__init__.py").read_text(encoding="utf-8")
+        package = module.__package__
+        stem = module.__name__.rpartition(".")[2]
+    else:
+        package, _, stem = module.rpartition(".")
+    if not package:
+        raise ValueError(f"Cannot read source for {module!r}: it is not part of a package.")
+    return importlib.resources.files(package).joinpath(f"{stem}.py").read_text(encoding="utf-8")
+
+
+def _resolve_traversable(module_path):
+    """Return a Traversable for `module_path`."""
+    transformers_module = sys.modules.get("transformers")
+    if transformers_module is not None and getattr(transformers_module, "__file__", None) is not None:
+        transformers_root = pathlib.Path(transformers_module.__file__).parent.resolve()
+        try:
+            rel = pathlib.Path(module_path).resolve().relative_to(transformers_root)
+        except ValueError:
+            pass
+        else:
+            traversable = importlib.resources.files("transformers")
+            for part in rel.parts:
+                traversable = traversable.joinpath(part)
+            return traversable
+    # Fall back to pathlib.Path for paths outside the transformers package.
+    return pathlib.Path(module_path)
+
+
 @lru_cache
 def create_import_structure_from_path(module_path):
     """
@@ -2724,36 +2763,38 @@ def create_import_structure_from_path(module_path):
         }
     }
     """
-    import_structure = {}
-
     if os.path.isfile(module_path):
         module_path = os.path.dirname(module_path)
+    return _create_import_structure_from_traversable(_resolve_traversable(module_path))
 
-    adjacent_modules = []
 
-    with os.scandir(module_path) as entries:
-        for entry in entries:
-            if entry.name == "__pycache__":
-                continue
-            if entry.is_dir():
-                import_structure[entry.name] = create_import_structure_from_path(entry.path)
-            elif not entry.name.startswith(("convert_", "modular_")):
-                adjacent_modules.append(entry.name)
+def _create_import_structure_from_traversable(traversable):
+    """Walk a Traversable and build the import structure."""
+    import_structure = {}
+    adjacent_entries = []
+
+    for entry in traversable.iterdir():
+        if entry.name == "__pycache__":
+            continue
+        if entry.is_dir():
+            # Recurse via the Traversable, not `files(subpackage)` — the latter would force-import the subpackage.
+            import_structure[entry.name] = _create_import_structure_from_traversable(entry)
+        elif not entry.name.startswith(("convert_", "modular_")):
+            adjacent_entries.append(entry)
 
     # We're only taking a look at files different from __init__.py
     # We could theoretically require things directly from the __init__.py
     # files, but this is not supported at this time.
-    if "__init__.py" in adjacent_modules:
-        adjacent_modules.remove("__init__.py")
+    adjacent_entries = [e for e in adjacent_entries if e.name != "__init__.py"]
 
     module_requirements = {}
-    for module_name in adjacent_modules:
+    for entry in adjacent_entries:
         # Only modules ending in `.py` are accepted here.
-        if not module_name.endswith(".py"):
+        if not entry.name.endswith(".py"):
             continue
 
-        with open(os.path.join(module_path, module_name), encoding="utf-8") as f:
-            file_content = f.read()
+        module_name = entry.name
+        file_content = entry.read_text(encoding="utf-8")
 
         # Remove the .py suffix
         module_name = module_name[:-3]
