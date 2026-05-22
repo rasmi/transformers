@@ -61,3 +61,11 @@ class TestGetModuleSource:
         # The package resolves, but the .py file inside it does not exist.
         with pytest.raises((FileNotFoundError, ModuleNotFoundError)):
             get_module_source("transformers.utils.this_module_does_not_exist")
+
+    def test_module_object_stem_from_file(self):
+        """Verify stem is derived from __file__, not __name__."""
+        from transformers.models.bert import modeling_bert
+
+        src = get_module_source(modeling_bert)
+        assert "class BertModel" in src or "BertPreTrainedModel" in src
+

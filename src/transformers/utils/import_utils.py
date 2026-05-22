@@ -2684,7 +2684,11 @@ def get_module_source(module: ModuleType | str) -> str:
         if hasattr(module, "__path__"):
             return importlib.resources.files(module.__name__).joinpath("__init__.py").read_text(encoding="utf-8")
         package = module.__package__
-        stem = module.__name__.rpartition(".")[2]
+        file_path = getattr(module, "__file__", None)
+        if file_path is not None:
+            stem = pathlib.PurePath(file_path).stem
+        else:
+            stem = module.__name__.rpartition(".")[2]
     else:
         package, _, stem = module.rpartition(".")
     if not package:
@@ -2763,7 +2767,8 @@ def create_import_structure_from_path(module_path):
         }
     }
     """
-    if os.path.isfile(module_path):
+    module_path = str(module_path)
+    if module_path.endswith(".py"):
         module_path = os.path.dirname(module_path)
     return _create_import_structure_from_traversable(_resolve_traversable(module_path))
 
