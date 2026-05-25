@@ -2675,25 +2675,22 @@ def fetch__all__(file_content) -> list[str]:
 
 def get_module_source(module: ModuleType | str) -> str:
     """
-    Read the source of a Python module via importlib.resources. Accepts either a module object or a fully
-    qualified dotted name (e.g. `"transformers.models.bert.modeling_bert"`). Raises `ValueError` if the
-    module is not part of a package (e.g. `__main__` or a top-level script).
+    Read the source of a Python module via its loader's `get_source` protocol. This works uniformly for
+    packages (returns `__init__.py`), regular modules, and zip-backed modules in hermetic environments.
     """
-    if isinstance(module, ModuleType):
-        # Packages have `__path__`; read their `__init__.py` directly.
-        if hasattr(module, "__path__"):
-            return importlib.resources.files(module.__name__).joinpath("__init__.py").read_text(encoding="utf-8")
-        package = module.__package__
-        file_path = getattr(module, "__file__", None)
-        if file_path is not None:
-            stem = pathlib.PurePath(file_path).stem
-        else:
-            stem = module.__name__.rpartition(".")[2]
+    if isinstance(module, str):
+        spec = importlib.util.find_spec(module)
+        if spec is None:
+            raise ModuleNotFoundError(module)
+        loader, name = spec.loader, module
     else:
-        package, _, stem = module.rpartition(".")
-    if not package:
-        raise ValueError(f"Cannot read source for {module!r}: it is not part of a package.")
-    return importlib.resources.files(package).joinpath(f"{stem}.py").read_text(encoding="utf-8")
+        loader, name = getattr(module, "__loader__", None), module.__name__
+    if loader is None or not hasattr(loader, "get_source"):
+        raise ValueError(f"Module {name!r} has no source-providing loader.")
+    source = loader.get_source(name)
+    if source is None:
+        raise FileNotFoundError(f"No source available for {name!r}.")
+    return source
 
 
 def _resolve_traversable(module_path):

@@ -52,14 +52,14 @@ class TestGetModuleSource:
         # utils/__init__.py re-exports get_module_source via the import_utils module.
         assert "from .import_utils" in src or "import_utils" in src
 
-    def test_main_raises_value_error(self):
-        # Top-level / __main__ modules are not inside a package.
-        with pytest.raises(ValueError, match="not part of a package"):
-            get_module_source("__main__")
+    def test_builtin_module_has_no_python_source(self):
+        # Built-in modules (e.g. sys) have a loader, but its get_source returns None.
+        with pytest.raises(FileNotFoundError, match="No source available"):
+            get_module_source("sys")
 
-    def test_unknown_module_raises_lookup_error(self):
-        # The package resolves, but the .py file inside it does not exist.
-        with pytest.raises((FileNotFoundError, ModuleNotFoundError)):
+    def test_unknown_module_raises_module_not_found(self):
+        # find_spec returns None for a module that doesn't exist.
+        with pytest.raises(ModuleNotFoundError):
             get_module_source("transformers.utils.this_module_does_not_exist")
 
     def test_module_object_stem_from_file(self):
@@ -68,4 +68,3 @@ class TestGetModuleSource:
 
         src = get_module_source(modeling_bert)
         assert "class BertModel" in src or "BertPreTrainedModel" in src
-
