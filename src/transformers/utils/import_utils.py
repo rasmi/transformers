@@ -2697,17 +2697,15 @@ def _resolve_traversable(module_path):
     """Return a Traversable for `module_path`."""
     transformers_module = sys.modules.get("transformers")
     if transformers_module is not None and getattr(transformers_module, "__file__", None) is not None:
-        transformers_root = pathlib.Path(transformers_module.__file__).parent.resolve()
-        try:
-            rel = pathlib.Path(module_path).resolve().relative_to(transformers_root)
-        except ValueError:
-            pass
-        else:
+        pkg_root_name = pathlib.Path(transformers_module.__file__).parent.name
+        pkg_root_marker = os.sep + pkg_root_name + os.sep
+        _, matched, rel_path = str(module_path).rpartition(pkg_root_marker)
+        if matched:
             traversable = importlib.resources.files("transformers")
-            for part in rel.parts:
+            for part in pathlib.PurePath(rel_path).parts:
                 traversable = traversable.joinpath(part)
             return traversable
-    # Fall back to pathlib.Path for paths outside the transformers package.
+
     return pathlib.Path(module_path)
 
 
